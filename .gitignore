@@ -1,7 +1,6 @@
 /output
 .env
 __pycache__/
-story_memory.json
 test-insta.py
 test.py
 video.mp4
