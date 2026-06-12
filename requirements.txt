@@ -4,3 +4,4 @@ moviepy==2.2.1
 pillow==11.3.0
 beautifulsoup4==4.14.3
 ffmpy==1.0.0
+requests
