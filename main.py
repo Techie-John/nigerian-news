@@ -347,7 +347,7 @@ RULES:
    Then briefly mention 2-3 stories coming up.
 2. Each story narration: EXACTLY 1 to 2 SHORT sentences. No more.
    - One sentence states the core fact. One sentence adds one key detail if needed. That is all.
-3. [WHEN: TODAY] → say "today", "this morning", "earlier today"
+3. [WHEN: TODAY] → say "this morning", "earlier today"
    [WHEN: YESTERDAY] → say "yesterday", "last night"
 4. Short display headline: max 6 words. Like a strong WhatsApp message. No full stop.
 5. OUTRO: Brief and factual. Tell people to follow Yaarn for daily Nigerian news. Keep it very short.
@@ -566,7 +566,7 @@ def _make_collage_intro(date_str, images):
     draw    = ImageDraw.Draw(canvas)
 
     # Brand — large and bold
-    draw.text((90, 520),  "YAARN",       font=_font(180), fill=WHITE)
+    draw.text((90, 520),  "YAARN",       font=_font(680), fill=WHITE)
     draw.rectangle([90, 740, VIDEO_W - 90, 750], fill=WHITE)
     draw.text((90, 776),  date_str.upper(), font=_font(48),  fill=GREY)
 
