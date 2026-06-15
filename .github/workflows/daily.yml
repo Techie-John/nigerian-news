@@ -2,7 +2,7 @@ name: Yaarn Daily Nigerian News
 
 on:
   schedule:
-    - cron: "0 18 * * *"   # 18:00 UTC = 7:00 PM WAT
+    - cron: "0 16 * * *"   # 16:00 UTC = 5:00 PM WAT
   workflow_dispatch:        # allows manual trigger from Actions tab
 
 permissions:
