@@ -34,7 +34,7 @@ GROQ_API_KEY     = os.getenv("GROQ_API_KEY")
 KOKORO_API_URL   = os.getenv("KOKORO_API_URL")
 KOKORO_API_KEY   = os.getenv("KOKORO_API_KEY")
 IG_ACCOUNT_ID    = os.getenv("INSTAGRAM_ACCOUNT_ID", "17841422988712010")
-FB_PAGE_TOKEN    = os.getenv("EAATVaAurulQBRpOJlODREgVSa9CBvX256Y8RCLCgHQHIzLIYkEHoE16NGqrQRSVPVQ38t5aGGOmbKjB8brQtYiDJtYOcs7gCHQDCVIoRmiFPDs1wmAjqoMjCKIUUtdvm1SO95wzJJFIGBYYnnUQW1zNYw7mxiQ5IZBXTo3oZAKfRLZBVA2VLoPJbD3grTPM9gZDZD")
+FB_PAGE_TOKEN    = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GITHUB_TOKEN     = os.getenv("GITHUB_TOKEN")
@@ -65,6 +65,11 @@ RSS_SOURCES = [
     {"name": "Sahara Reporters","url": "https://saharareporters.com/rss.xml",      "priority": 6},
     {"name": "Daily Trust",     "url": "https://dailytrust.com/feed",              "priority": 7},
 ]
+
+print(f"DEBUG: IG_ACCOUNT_ID = {IG_ACCOUNT_ID}")
+print(f"DEBUG: FB_PAGE_TOKEN present = {bool(FB_PAGE_TOKEN)}")
+print(f"DEBUG: TELEGRAM_TOKEN present = {bool(TELEGRAM_TOKEN)}")
+print(f"DEBUG: TELEGRAM_CHAT_ID = {TELEGRAM_CHAT_ID}")
 
 NIGERIA_KEYWORDS = {
     "naira", "fuel", "petrol", "electricity", "tariff", "inflation", "price",
