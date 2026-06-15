@@ -42,6 +42,7 @@ jobs:
           INSTAGRAM_ACCOUNT_ID:      ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN:        ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:          ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
         run: python main.py
 
       - name: Upload run output (video, script, audio)

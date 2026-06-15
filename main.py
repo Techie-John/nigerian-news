@@ -38,7 +38,7 @@ FB_PAGE_TOKEN    = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GITHUB_TOKEN     = os.getenv("GITHUB_TOKEN")
-GITHUB_REPO      = os.getenv("GITHUB_REPO", "")   # e.g. "Techie-John/yaarn-news"
+GITHUB_REPO      = 'Techie-John/nigerian-news'   # e.g. "Techie-John/yaarn-news"
 
 GROQ_MODEL    = "llama-3.3-70b-versatile"
 VIDEO_W       = 1080
@@ -1158,10 +1158,12 @@ def upload_video_with_fallbacks(video_path):
     for attempt in range(2):
         try:
             with open(video_path, "rb") as f:
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 resp = requests.post(
                     "https://catbox.moe/user/api.php",
                     data={"reqtype": "fileupload"},
                     files={"fileToUpload": ("video.mp4", f, "video/mp4")},
+                    headers=headers,
                     timeout=360,
                 )
             if resp.status_code == 200 and resp.text.strip().startswith("https://"):
