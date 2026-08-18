@@ -40,7 +40,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GITHUB_TOKEN     = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO      = 'Techie-John/nigerian-news'   # e.g. "Techie-John/yaarn-news"
 
-GROQ_MODEL    = "llama-3.3-70b-versatile"
+GROQ_MODEL    = "openai/gpt-oss-120b"
 VIDEO_W       = 1080
 VIDEO_H       = 1920
 FPS           = 24
