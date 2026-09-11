@@ -44,13 +44,30 @@ GROQ_MODEL    = "openai/gpt-oss-120b"
 VIDEO_W       = 1080
 VIDEO_H       = 1920
 FPS           = 24
-MAX_STORIES   = 15
+MAX_STORIES   = 7          # was 15 — tighter selection + shorter videos
 HOURS_BACK    = 18
-SIM_THRESH    = 0.55
+SIM_THRESH    = 0.55       # same-run duplicate threshold (different sources, same event)
+REPEAT_SIM_THRESH = 0.6    # cross-day paraphrase threshold (memory-based)
 OUTPUT_DIR    = Path("output")
 MEMORY_FILE   = Path("story_memory.json")
 BG_MUSIC_FILE = "audio.mp3"
 BG_MUSIC_VOL  = 0.07
+
+# Ebook offer segment — shown right after the intro, before the stories.
+EBOOK_COVER_PATH = "offer.jpg"
+EBOOK_NARRATIONS = [
+    "Tired of side hustle advice that doesn't add up? Our Side Income Playbook "
+    "gives you the real numbers — actual startup costs and break-even math for "
+    "fifteen proven hustles. Two thousand five hundred naira. Link in bio.",
+
+    "Fifteen side hustles. Real cost tables, not guesses. Our Side Income Playbook "
+    "shows you exactly what it takes to start and when you break even — before "
+    "you spend a single naira. Link in bio.",
+
+    "Stop guessing with your money. The Side Income Playbook breaks down fifteen "
+    "proven hustles with real startup costs and a simple guide to growing what "
+    "you earn. Two thousand five hundred naira, yours to keep. Link in bio.",
+]
 
 BLACK = (8, 8, 8)
 WHITE = (255, 255, 255)
@@ -186,6 +203,42 @@ GENERIC_NIGERIA_IMAGES = [
 
 
 # ══════════════════════════════════════════════════════════════════════
+# NETWORK HELPERS — retry with backoff
+# ══════════════════════════════════════════════════════════════════════
+
+def _request_with_retry(method, url, max_attempts=3, backoff_base=2, **kwargs):
+    """requests wrapper with basic retry/backoff — protects the unattended
+    daily run against a single transient timeout/rate-limit killing it."""
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            last_exc = e
+            if attempt < max_attempts:
+                wait = backoff_base ** attempt
+                print(f"    ⚠ Request failed (attempt {attempt}/{max_attempts}): {e} — retrying in {wait}s")
+                time.sleep(wait)
+    raise last_exc
+
+
+def _groq_completion_with_retry(client, max_attempts=3, backoff_base=2, **kwargs):
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            last_exc = e
+            if attempt < max_attempts:
+                wait = backoff_base ** attempt
+                print(f"    ⚠ Groq call failed (attempt {attempt}/{max_attempts}): {e} — retrying in {wait}s")
+                time.sleep(wait)
+    raise last_exc
+
+
+# ══════════════════════════════════════════════════════════════════════
 # STORY MEMORY
 # ══════════════════════════════════════════════════════════════════════
 
@@ -207,18 +260,46 @@ def _story_key(title):
 
 
 def is_seen(title, memory):
-    return _story_key(title) in memory
+    """
+    Exact-hash fast path first. Then a fuzzy pass against recently-covered
+    titles to catch paraphrased repeats of a story already run (e.g. "Naira
+    Hits New Low" reappearing a day later as "Naira Weakens Further Against
+    Dollar" with no real new development).
+    """
+    key = _story_key(title)
+    if key in memory:
+        return True
+
+    title_lower = title.lower().strip()
+    for entry in memory.values():
+        prior_title = entry.get("title", "") if isinstance(entry, dict) else ""
+        if not prior_title:
+            continue
+        if SequenceMatcher(None, title_lower, prior_title.lower()).ratio() >= REPEAT_SIM_THRESH:
+            return True
+    return False
 
 
 def mark_seen(title, memory):
-    memory[_story_key(title)] = datetime.now(timezone.utc).isoformat()
+    memory[_story_key(title)] = {
+        "title": title,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
     return memory
 
 
 def cleanup_memory(memory):
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    return {k: v for k, v in memory.items()
-            if datetime.fromisoformat(v) > cutoff}
+    cleaned = {}
+    for k, v in memory.items():
+        # backward-compatible with the old flat {hash: iso_string} format
+        ts = v.get("timestamp") if isinstance(v, dict) else v
+        try:
+            if datetime.fromisoformat(ts) > cutoff:
+                cleaned[k] = v
+        except Exception:
+            continue
+    return cleaned
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -255,7 +336,7 @@ def scrape_news():
                     "published": published,
                     "source":    source["name"],
                     "priority":  source["priority"],
-                    "image_url": _get_og_image(link),
+                    "image_url": None,  # fetched later, only for stories that survive filtering
                 })
                 count += 1
             print(f"  ✓ {source['name']}: {count} stories")
@@ -318,6 +399,20 @@ def _get_og_image(url):
     return None
 
 
+def _attach_og_images(stories):
+    """
+    Fetch OG images only for the stories that actually survived filtering —
+    not for every relevant-but-later-discarded story from the raw scrape.
+    Run in parallel since these are independent network calls.
+    """
+    print("  Fetching preview images for selected stories...")
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        image_urls = list(executor.map(lambda s: _get_og_image(s["link"]), stories))
+    for s, image_url in zip(stories, image_urls):
+        s["image_url"] = image_url
+    return stories
+
+
 def _clean_html(raw):
     try:
         return BeautifulSoup(raw, "html.parser").get_text(" ").strip()
@@ -337,23 +432,31 @@ def filter_stories(stories):
         f"[{i+1}] {s['title']} ({s['source']})"
         for i, s in enumerate(stories)
     )
-    prompt = f"""You are a Nigerian news editor at a big TV station.
-Pick the {MAX_STORIES} stories that matter most to everyday Nigerians.
+    prompt = f"""You are a Nigerian news editor at a big TV station, picking stories for a
+fast-scrolling social media audience. Your job is NOT to pick everything technically
+important — it's to pick what makes someone stop scrolling.
+
+Pick the {MAX_STORIES} stories that are BREAKING or genuinely striking.
 
 PICK stories about:
-- Fuel price, electricity bills, naira rate — things people feel in their pocket
-- Security — attacks, kidnapping, killings, military operations
-- Strikes, protests, road closures — things that affect daily movement
-- Natural disasters — floods, fires, building collapse
-- Health emergencies — disease outbreaks, hospital issues
-- Big government actions that directly affect ordinary people
-- Breaking news everyone will be talking about today
+- Breaking security incidents happening now — attacks, kidnappings, military operations
+- Sharp, sudden swings — a real jump or drop in fuel price, naira, or a major economic shock
+- Dramatic political developments — a shock resignation, a prominent arrest, a surprising ruling
+- Major disasters — fires, floods, building collapses, mass-casualty accidents
+- Real health emergencies — an actual outbreak, not a routine ministry statement
+- Anything genuinely unusual or unexpected that most Nigerians would want to know today
 
-DO NOT PICK:
-- Routine government meetings and committee setups
-- Award ceremonies and inaugurations with no real impact
-- Press conferences that say nothing new
-- Political back-and-forth with no direct effect on people
+DO NOT PICK, even if technically "important":
+- Routine government meetings, committee formations, administrative announcements
+- Award ceremonies, inaugurations, courtesy visits
+- Press conferences that just restate a known position
+- Political back-and-forth with no actual new development
+- Minor updates to an ongoing story with nothing new to report
+- Procedural court activity (adjournments, filings) — only real outcomes: verdicts, arrests, convictions
+- Anything that reads like a press release rather than a news event
+
+Test: would this make someone stop scrolling and go "wait, what?" If not, skip it,
+even if it's the kind of story a newspaper would run.
 
 Stories:
 {stories_text}
@@ -363,7 +466,8 @@ Pick exactly {MAX_STORIES} or fewer if not enough qualify.
 Return ONLY the JSON array. Nothing else."""
 
     client = Groq(api_key=GROQ_API_KEY)
-    resp   = client.chat.completions.create(
+    resp   = _groq_completion_with_retry(
+        client,
         model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
@@ -417,7 +521,8 @@ YOUR STYLE:
 - 100% NEUTRAL. Do NOT condemn or praise any person, group, or government.
 - Do NOT use emotional words: "shocking", "outrageous", "alarming", "sad", "unfortunately".
 - Do NOT take sides on any political, ethnic, or religious issue.
-- Clear. Direct. Factual.
+- Clear. Direct. Factual. But PUNCHY — lead every story with its most striking
+  detail, not with background. Get to the point immediately.
 
 MONEY RULE — VERY IMPORTANT:
 - NEVER write currency as symbols or abbreviations like NGN, ₦, N, $, USD, bn, m, k.
@@ -438,13 +543,21 @@ VARY YOUR LANGUAGE — VERY IMPORTANT:
   "Security forces arrested three suspects in Abuja." / "The Senate passed a new bill."
 
 STRICT RULES:
-1. INTRO: Start exactly with: "This is what happened in Nigeria today, {display_date}."
-   Then name the top 3 stories. One short sentence each.
-2. Each story narration: 1 sentence. Use a 2nd sentence ONLY if essential.
-3. Short display headline: max 5 words. No full stop.
-4. OUTRO: Short. Tell people to follow Yaarn. Neutral tone.
-5. NO URLs. NO "according to". NO "reportedly". NO "it was gathered".
-6. Return ONLY valid JSON. No markdown.
+1. HOOK: Open with the single most attention-grabbing fact from today's TOP
+   story — direct, specific, no preamble. Do NOT start with "This is what
+   happened" and do NOT lead with the date. Stay 100% factual — no
+   exaggeration, no emotional words — but lead with the fact itself, not a
+   description of what you're about to say.
+   Example: "Fuel price has jumped in Lagos overnight." NOT "This is what
+   happened in Nigeria today, {display_date}."
+2. Then name the other 2 top stories in one short sentence each, e.g.
+   "Plus, [2nd headline], and [3rd headline] — here's today's news."
+3. Each story narration: 1 punchy sentence. Use a 2nd sentence ONLY if
+   essential. Lead with the most striking detail — not background.
+4. Short display headline: max 5 words. No full stop.
+5. OUTRO: Short. Tell people to follow Yaarn. Neutral tone.
+6. NO URLs. NO "according to". NO "reportedly". NO "it was gathered".
+7. Return ONLY valid JSON. No markdown.
 
 JSON FORMAT:
 {{
@@ -457,7 +570,8 @@ JSON FORMAT:
 }}"""
 
     client = Groq(api_key=GROQ_API_KEY)
-    resp   = client.chat.completions.create(
+    resp   = _groq_completion_with_retry(
+        client,
         model=GROQ_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -608,24 +722,29 @@ def _repair_truncated_json(s):
 
 def generate_audio(script, output_dir):
     print("\n[4/6] Generating audio (Kokoro bm_george)...")
-    segments = [("intro", script["intro"])]
+    segments = [("intro", script["intro"]), ("ebook_offer", random.choice(EBOOK_NARRATIONS))]
     for i, s in enumerate(script["stories"]):
         segments.append((f"story_{i+1:02d}", s["narration"]))
     segments.append(("outro", script["outro"]))
 
-    audio_files = {}
-    for name, text in segments:
-        response = requests.post(
+    def _generate_one(segment):
+        name, text = segment
+        response = _request_with_retry(
+            "POST",
             KOKORO_API_URL,
             json={"text": text, "voice": "bm_george",
                   "speed": 0.94, "api_key": KOKORO_API_KEY},
             timeout=60,
         )
-        response.raise_for_status()
         path = output_dir / f"audio_{name}.wav"
         path.write_bytes(response.content)
-        audio_files[name] = str(path)
         print(f"  ✓ {name}")
+        return name, str(path)
+
+    audio_files = {}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for name, path in executor.map(_generate_one, segments):
+            audio_files[name] = path
     return audio_files
 
 
@@ -659,6 +778,11 @@ def build_video(script, stories, audio_files, output_dir):
     intro_frame = _make_collage_intro(script["date"], images, used_wiki_urls)
     intro_clip  = _static_clip(intro_frame, intro_audio.duration).with_audio(intro_audio)
     clips.append(intro_clip)
+
+    ebook_audio = AudioFileClip(audio_files["ebook_offer"])
+    ebook_frame = _make_ebook_offer_frame(EBOOK_COVER_PATH)
+    ebook_clip  = _static_clip(ebook_frame, ebook_audio.duration).with_audio(ebook_audio)
+    clips.append(ebook_clip)
 
     for i, (story_data, pil_image) in enumerate(zip(script["stories"], images)):
         key        = f"story_{i+1:02d}"
@@ -772,6 +896,23 @@ def _make_story_frame(pil_image, headline):
         _draw_text_with_shadow(draw, (90, y), line, font=_font(f_size))
         y += f_size + 20
 
+    draw.text((VIDEO_W - 36, VIDEO_H - 44), "YAARN",
+              font=_font(30), fill=(170, 170, 170), anchor="rs")
+    return np.array(img)
+
+
+def _make_ebook_offer_frame(cover_path):
+    """Static frame for the ebook offer segment. The flyer image already
+    carries its own headline/price/CTA design, so this just fits it into
+    the video frame — no extra text drawn on top except the brand mark."""
+    try:
+        cover = Image.open(cover_path).convert("RGB")
+    except Exception as e:
+        print(f"  ⚠ Ebook flyer not found ({e}) — using gradient fallback")
+        cover = _gradient_fallback("Side Income Playbook")
+
+    img = _fill_canvas(cover)
+    draw = ImageDraw.Draw(img)
     draw.text((VIDEO_W - 36, VIDEO_H - 44), "YAARN",
               font=_font(30), fill=(170, 170, 170), anchor="rs")
     return np.array(img)
@@ -1318,6 +1459,8 @@ def run():
     if not filtered:
         print("No high-impact stories after filtering. Exiting.")
         return
+
+    filtered = _attach_og_images(filtered)
 
     script = generate_script(filtered)
     (run_dir / "script.json").write_text(json.dumps(script, indent=2))
