@@ -55,18 +55,19 @@ BG_MUSIC_VOL  = 0.07
 
 # Ebook offer segment — shown right after the intro, before the stories.
 EBOOK_COVER_PATH = "offer.jpg"
+SELAR_LINK       = "https://selar.com/0581w789c7"
 EBOOK_NARRATIONS = [
-    "Tired of side hustle advice that doesn't add up? Our Side Income Playbook "
-    "gives you the real numbers — actual startup costs and break-even math for "
-    "fifteen proven hustles. Two thousand five hundred naira. Link in bio.",
+    "Wait — before today's news, we've put together a list of side hustles you "
+    "can start right in your own location. Real costs, real break-even numbers, "
+    "no guessing. Just two thousand five hundred naira. Link in bio.",
 
-    "Fifteen side hustles. Real cost tables, not guesses. Our Side Income Playbook "
-    "shows you exactly what it takes to start and when you break even — before "
-    "you spend a single naira. Link in bio.",
+    "Before we get into today's news — we've gathered fifteen side hustles you "
+    "can start where you are, with real cost breakdowns and break-even math, "
+    "not vague advice. Two thousand five hundred naira. Link in bio.",
 
-    "Stop guessing with your money. The Side Income Playbook breaks down fifteen "
-    "proven hustles with real startup costs and a simple guide to growing what "
-    "you earn. Two thousand five hundred naira, yours to keep. Link in bio.",
+    "Quick one before today's news. Want a side income? We've put together "
+    "fifteen proven hustles with the real numbers behind each one, so you know "
+    "exactly what it costs and when it pays off. Link in bio.",
 ]
 
 BLACK = (8, 8, 8)
