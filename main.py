@@ -31,8 +31,8 @@ load_dotenv()
 # ══════════════════════════════════════════════════════════════════════
 
 GROQ_API_KEY     = os.getenv("GROQ_API_KEY")
-KOKORO_API_URL   = os.getenv("KOKORO_API_URL")
-KOKORO_API_KEY   = os.getenv("KOKORO_API_KEY")
+WAZOBIA_API_URL  = os.getenv("WAZOBIA_API_URL")   # WazobiaVoice endpoint (replaces Kokoro)
+JAMES_REFERENCE_AUDIO_PATH = "james.wav"  # James's sample clip, cloned per call
 IG_ACCOUNT_ID    = '17841422988712010'
 FB_PAGE_TOKEN    = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -57,18 +57,25 @@ BG_MUSIC_VOL  = 0.07
 EBOOK_COVER_PATH = "offer.jpg"
 SELAR_LINK       = "https://selar.com/0581w789c7"
 EBOOK_NARRATIONS = [
-    "Wait — before today's news, we've put together a list of side hustles you "
-    "can start right in your own location. Real costs, real break-even numbers, "
-    "no guessing. Just two thousand five hundred naira. Link in bio.",
+    "Fuel don cost. Food don cost. You need extra money coming in. "
+    "We made a small book. It has fifteen ways to make extra money. "
+    "It shows the real cost. It shows when you start to gain. "
+    "Send 'playbook' on WhatsApp. Link is in our bio. "
+    "It costs two thousand five hundred naira.",
 
-    "Before we get into today's news — we've gathered fifteen side hustles you "
-    "can start where you are, with real cost breakdowns and break-even math, "
-    "not vague advice. Two thousand five hundred naira. Link in bio.",
+    "Do you want extra money every month? "
+    "We made a book with fifteen side hustles. "
+    "No big grammar. Just real numbers — what it costs, and when it pays you back. "
+    "Message 'playbook' on WhatsApp. Link is in our bio. "
+    "Two thousand five hundred naira only.",
 
-    "Quick one before today's news. Want a side income? We've put together "
-    "fifteen proven hustles with the real numbers behind each one, so you know "
-    "exactly what it costs and when it pays off. Link in bio.",
+    "Here is something small before the news. "
+    "We made a book. It has fifteen ways to earn extra money. "
+    "Real cost. Real numbers. No guessing. "
+    "Send 'playbook' on our WhatsApp. Link is in our bio. "
+    "It is two thousand five hundred naira.",
 ]
+
 
 BLACK = (8, 8, 8)
 WHITE = (255, 255, 255)
@@ -558,7 +565,11 @@ STRICT RULES:
 4. Short display headline: max 5 words. No full stop.
 5. OUTRO: Short. Tell people to follow Yaarn. Neutral tone.
 6. NO URLs. NO "according to". NO "reportedly". NO "it was gathered".
-7. Return ONLY valid JSON. No markdown.
+7. Every narration line must be a complete, grammatically correct sentence
+   ending in proper punctuation (period, question mark, or exclamation mark).
+   Do NOT use sentence fragments, trailing dashes, or incomplete clauses for
+   dramatic effect — punchy means concise and direct, not grammatically broken.
+8. Return ONLY valid JSON. No markdown.
 
 JSON FORMAT:
 {{
@@ -721,29 +732,61 @@ def _repair_truncated_json(s):
 # STAGE 3 — AUDIO
 # ══════════════════════════════════════════════════════════════════════
 
+def _pad_wav_silence(path, leading_ms=80, trailing_ms=350):
+    """
+    Add a short silence buffer to the start/end of a WAV file so consecutive
+    segments don't cut into each other abruptly when concatenated into the
+    video — this is what was making the transitions between stages sound off.
+    """
+    import wave
+    try:
+        with wave.open(str(path), "rb") as wf:
+            params = wf.getparams()
+            frames = wf.readframes(wf.getnframes())
+
+        lead_frames  = int(params.framerate * leading_ms / 1000)
+        trail_frames = int(params.framerate * trailing_ms / 1000)
+        silence_lead  = b"\x00" * (lead_frames * params.sampwidth * params.nchannels)
+        silence_trail = b"\x00" * (trail_frames * params.sampwidth * params.nchannels)
+
+        with wave.open(str(path), "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(silence_lead + frames + silence_trail)
+    except Exception as e:
+        print(f"    ⚠ Could not pad silence for {path}: {e}")
+
+
 def generate_audio(script, output_dir):
-    print("\n[4/6] Generating audio (Kokoro bm_george)...")
+    print("\n[4/6] Generating audio (WazobiaVoice — James)...")
     segments = [("intro", script["intro"]), ("ebook_offer", random.choice(EBOOK_NARRATIONS))]
     for i, s in enumerate(script["stories"]):
         segments.append((f"story_{i+1:02d}", s["narration"]))
     segments.append(("outro", script["outro"]))
 
+    with open(JAMES_REFERENCE_AUDIO_PATH, "rb") as f:
+        james_reference_bytes = f.read()
+
     def _generate_one(segment):
         name, text = segment
         response = _request_with_retry(
             "POST",
-            KOKORO_API_URL,
-            json={"text": text, "voice": "bm_george",
-                  "speed": 0.94, "api_key": KOKORO_API_KEY},
-            timeout=60,
+            WAZOBIA_API_URL,
+            data={"text": text, "language_id": "en",
+                  "exaggeration": 0.5, "cfg_weight": 0.5},
+            files={"reference_audio": ("james_reference.wav", james_reference_bytes, "audio/wav")},
+            timeout=180,   # bigger model than Kokoro — allow more headroom, esp. on cold start
         )
         path = output_dir / f"audio_{name}.wav"
         path.write_bytes(response.content)
+        _pad_wav_silence(path)
         print(f"  ✓ {name}")
         return name, str(path)
 
     audio_files = {}
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    # Lower concurrency than before: without @modal.concurrent on the
+    # WazobiaVoice app, parallel requests likely spin up separate a10g GPU
+    # containers rather than sharing one — keep this modest to control cost.
+    with ThreadPoolExecutor(max_workers=3) as executor:
         for name, path in executor.map(_generate_one, segments):
             audio_files[name] = path
     return audio_files
@@ -1208,6 +1251,9 @@ def _build_caption(script):
     lines = [f"Yaarn — {script['date']}\n"]
     for i, s in enumerate(script["stories"], 1):
         lines.append(f"{i}. {s['headline']}")
+    lines.append("\n💰 Want a side income? Grab our Side Income Playbook — 15 proven "
+                 "hustles with real numbers, real break-even math.")
+    lines.append(f"👉 {SELAR_LINK}")
     lines.append("\nFollow @yaarn.ng — Nigerian news, every day")
     return "\n".join(lines)
 
